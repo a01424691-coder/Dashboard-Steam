@@ -1,0 +1,243 @@
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+from dash import Dash, dcc, html, Input, Output
+
+df = pd.read_csv('steam.csv')
+
+# Lo mismo que hicimos en el notebook
+df['release_date'] = pd.to_datetime(df['release_date'], errors='coerce')
+df['release_year'] = df['release_date'].dt.year
+df['total_ratings'] = df['positive_ratings'] + df['negative_ratings']
+df['rating_ratio'] = (df['positive_ratings'] / df['total_ratings'].replace(0,1) * 100).round(1)
+df['main_genre'] = df['genres'].dropna().str.split(';').str[0].str.strip()
+df['main_platform'] = df['platforms'].dropna().str.split(';').str[0].str.strip()
+
+paleta = ['#2A475E','#5E7A91','#A7B7C4','#BADCF7','#8CCBFF']
+
+GRAFICOS = [
+    {'label': 'Histograma de Precios',             'value': 'g1'},
+    {'label': 'Top 10 Géneros',                    'value': 'g2'},
+    {'label': 'Precio vs Rating',                  'value': 'g3'},
+    {'label': 'Top 10 Desarrolladores',            'value': 'g4'},
+    {'label': 'Tiempo de Juego vs Aprobación',     'value': 'g5'},
+    {'label': 'Tiempo de Juego por Género (Strip)','value': 'g6'},
+    {'label': 'Lanzamientos por Año',              'value': 'g7'},
+    {'label': 'Tiempo Promedio por Género',        'value': 'g8'},
+    {'label': 'Ratings Positivos vs Negativos',    'value': 'g9'},
+    {'label': 'Idioma por Plataforma',             'value': 'g10'},
+]
+
+DESCRIPCIONES = {
+    'g1': """
+El histograma es de la distribución de precios de juegos de pago hasta 90 dólares, ya que el precio máximo en el dataset
+es 400, pero hay muy pocos juegos arriba de 100, cuando hacíamos el gráfico consideramos que quedaba muy grande y hacía
+difícil de interpretar con tantos bins. Mientras que el rug plot muestra la densidad real de puntos individuales.
+
+Podemos ver que la mayoría cuesta menos de 10 dólares, siendo el pico más alto de entre 6 y 7 dólares, seguido de juegos
+entre 3 y 4 dólares, por lo que los juegos más frecuentes son los de precios accesibles. El color depende de las
+plataformas en las que esté disponible, por lo que podemos ver que Windows domina por mucho, y el rug permite que veamos
+la densidad más claramente.
+""",
+    'g2': """
+La gráfica muestra los 10 géneros más frecuentes en Steam. Como cada juego puede tener varios géneros separados por punto
+y coma, los separamos con split y contamos cada uno por separado para no perder información, después se ordenaron de menor
+a mayor para que se vea más limpio.
+
+Lo que se puede ver es que Indie es por mucho el género más popular con casi 20,000 juegos, seguido de Action y Casual.
+El color va de más oscuro a más claro conforme hay más juegos de ese género, los últimos del top 10 como Free to Play y
+Sports tienen mucho menos presencia comparado con los primeros.
+""",
+    'g3': """
+Para este scatter filtramos precios entre 1 y 90 para quitar los juegos gratuitos y los outliers muy caros que aplastaban
+la escala, y pusimos un mínimo de 500 ratings porque con muy pocos ratings el porcentaje no es representativo.
+
+Se puede ver que no hay una relación clara entre precio y aprobación, los juegos baratos y caros tienen niveles de
+aprobación similares. La mayoría de los puntos se concentran entre 60% y 90% de aprobación sin importar el precio,
+y Windows sigue dominando la cantidad de puntos.
+""",
+    'g4': """
+Esta gráfica simplemente cuenta cuántos juegos tiene cada desarrollador y muestra los 10 con más títulos. Se usó un solo
+color de la paleta porque no hay una variable categórica extra que tenga sentido colorear.
+
+Lo interesante es que los desarrolladores con más juegos tienen entre 40 y 100 títulos, lo que indica que son estudios
+pequeños que lanzan muchos juegos cortos o de bajo presupuesto, lo cual es consistente con la dominancia del género
+indie que vimos antes.
+""",
+    'g5': """
+Filtramos el tiempo de juego entre 1 y 5,000 minutos porque hay juegos con tiempos registrados altísimos que son
+probablemente errores del dataset, y el mínimo de 100 ratings es para que el porcentaje sea confiable.
+
+No se ve una relación fuerte entre cuánto tiempo se juega y qué tan bien calificado está, los juegos bien calificados
+aparecen en todos los rangos de tiempo. Sí se nota que los juegos con tiempos muy altos tienden a tener aprobaciones
+más estables alrededor del 70-90%.
+""",
+    'g6': """
+Como el dataset tiene 27,000 juegos, graficarlos todos hacía que la gráfica pesara mucho y se viera saturada, por eso
+tomamos una muestra de 3,000 con random_state para que sea reproducible. El rango de 1 a 3,000 minutos quita los ceros
+y los outliers extremos.
+
+Cada punto es un juego y se puede ver que la mayoría se agrupa abajo sin importar el género. Los géneros como RPG y
+Strategy tienen más puntos dispersos hacia arriba, lo que tiene sentido porque son juegos de largo aliento comparados
+con Casual o Indie.
+""",
+    'g7': """
+Agrupamos por año y plataforma y contamos cuántos juegos salieron en cada combinación. El rango de 2000 a 2019 es porque
+antes del 2000 hay muy pocos datos y después del 2019 el dataset ya no está completo.
+
+Se ve claramente que Steam creció de forma exponencial a partir de 2012, alcanzando su pico en 2018. Mac y Linux siguen
+una curva similar pero muy por debajo de Windows, lo que confirma que Windows es prácticamente el estándar en gaming.
+""",
+    'g8': """
+Calculamos el promedio de tiempo de juego para los 8 géneros más frecuentes. El color va de más oscuro a más claro según
+el tiempo, para mantener consistencia visual con el resto de las gráficas de barras del notebook.
+
+RPG tiene el promedio más alto por mucho, lo que tiene sentido porque son juegos diseñados para jugarse durante decenas
+de horas. Casual e Indie tienen los promedios más bajos, lo que también es esperable dado que suelen ser experiencias
+más cortas.
+""",
+    'g9': """
+Filtramos los positivos por debajo de 50,000 y los negativos por debajo de 10,000 porque hay algunos juegos muy famosos
+que tienen millones de ratings y hacían que todos los demás quedaran aplastados en la esquina sin poder ver nada.
+
+La relación es bastante lineal, los juegos con más ratings positivos también tienden a tener más negativos simplemente
+porque más gente los jugó y los calificó. Windows aparece con los juegos de mayor volumen de ratings.
+""",
+    'g10': """
+Esta gráfica es un conteo simple de cuántos juegos están en inglés versus otro idioma, agrupado por plataforma principal.
+Solo usamos dos colores de la paleta porque la variable solo tiene dos valores.
+
+La gran mayoría de los juegos en todas las plataformas están en inglés, lo que refleja que el mercado angloparlante
+domina la distribución en Steam. La diferencia es proporcional en las tres plataformas.
+""",
+}
+
+
+def make_figure(value):
+    if value == 'g1':
+        return px.histogram(
+            df[df['price'] <= 90], x='price',
+            color='main_platform', marginal='rug',
+            color_discrete_sequence=[paleta[0], paleta[2], paleta[4]],
+            title='Precios por plataforma (hasta $90)',
+            labels={'price': 'Precio (USD)', 'main_platform': 'Plataforma'},
+            template='plotly_dark')
+
+    if value == 'g2':
+        top10 = df['genres'].dropna().str.split(';').explode().str.strip().value_counts().head(10).sort_values()
+        return go.Figure(go.Bar(
+            x=top10.values, y=top10.index, orientation='h',
+            marker=dict(color=top10.values, colorscale=paleta, showscale=True),
+            hovertemplate='Hay %{x:,} juegos del género %{y}<extra></extra>'
+        )).update_layout(title='Top 10 Géneros', xaxis_title='Número de juegos')
+
+    if value == 'g3':
+        return px.scatter(
+            df[df['price'].between(1, 90) & (df['total_ratings'] >= 500)],
+            x='price', y='rating_ratio', color='main_platform',
+            color_discrete_sequence=[paleta[0], paleta[2], paleta[4]],
+            title='Precio vs Ratings Positivos',
+            labels={'price': 'Precio (USD)', 'rating_ratio': '% Positivos'})
+
+    if value == 'g4':
+        top_dev = df['developer'].value_counts().head(10).sort_values()
+        return go.Figure(go.Bar(
+            x=top_dev.values, y=top_dev.index, orientation='h',
+            marker_color=paleta[1],
+            hovertemplate='<b>%{y}</b><br>%{x:,}<extra></extra>'
+        )).update_layout(title='Top 10 Desarrolladores', xaxis_title='Número de juegos')
+
+    if value == 'g5':
+        return px.scatter(
+            df[df['average_playtime'].between(1, 5000) & (df['total_ratings'] >= 100)],
+            x='average_playtime', y='rating_ratio', color='main_platform',
+            color_discrete_sequence=[paleta[0], paleta[2], paleta[4]],
+            title='Tiempo de Juego vs Aprobación',
+            labels={'average_playtime': 'Tiempo prom (min)', 'rating_ratio': '% Positivos'})
+
+    if value == 'g6':
+        top8 = df['main_genre'].value_counts().head(8).index
+        return px.strip(
+            df[df['main_genre'].isin(top8) & df['average_playtime'].between(1, 3000)].sample(3000, random_state=42),
+            x='main_genre', y='average_playtime', color='main_genre',
+            hover_name='name', color_discrete_sequence=paleta,
+            title='Tiempo de Juego por Género', stripmode='overlay',
+            labels={'main_genre': 'Género', 'average_playtime': 'Tiempo (min)'})
+
+    if value == 'g7':
+        yr  = df[df['release_year'].between(2000, 2019)].groupby(['release_year', 'main_platform']).size().reset_index(name='n')
+        fig = go.Figure()
+        for plat, color in zip(['windows', 'mac', 'linux'], [paleta[0], paleta[2], paleta[4]]):
+            s = yr[yr['main_platform'] == plat]
+            fig.add_trace(go.Scatter(x=s['release_year'], y=s['n'], name=plat.capitalize(),
+                                     mode='lines+markers', line=dict(color=color, width=3)))
+        return fig.update_layout(title='Lanzamientos por Año y Plataforma',
+                                 xaxis_title='Año', yaxis_title='Número de juegos')
+
+    if value == 'g8':
+        top8 = df['main_genre'].value_counts().head(8).index
+        avg  = df[df['main_genre'].isin(top8)].groupby('main_genre')['average_playtime'].mean().sort_values()
+        return go.Figure(go.Bar(
+            x=avg.values, y=avg.index, orientation='h',
+            marker=dict(color=avg.values, colorscale=paleta, showscale=True),
+            hovertemplate='<b>%{y}</b><br>%{x:.0f} min<extra></extra>'
+        )).update_layout(title='Tiempo Promedio por Género', xaxis_title='Minutos promedio')
+
+    if value == 'g9':
+        return px.scatter(
+            df[(df['positive_ratings'] < 50000) & (df['negative_ratings'] < 10000)],
+            x='negative_ratings', y='positive_ratings', color='main_platform',
+            color_discrete_sequence=[paleta[0], paleta[2], paleta[4]],
+            title='Ratings Positivos vs Negativos',
+            labels={'positive_ratings': 'Positivos', 'negative_ratings': 'Negativos'})
+
+    if value == 'g10':
+        return px.histogram(
+            df[df['main_platform'].notna()],
+            x='main_platform', color=df['english'].map({1: 'Inglés', 0: 'Otro idioma'}),
+            color_discrete_sequence=[paleta[0], paleta[3]],
+            title='Idioma de Juegos por Plataforma',
+            labels={'main_platform': 'Plataforma', 'color': 'Idioma'})
+
+
+app = Dash(__name__)
+
+app.layout = html.Div([
+
+    html.H1('Dashboard de Steam Store Games',
+            style={'textAlign': 'center', 'color': '#2A475E', 'marginBottom': '4px'}),
+
+    dcc.Markdown(' Jezrel Hernandez Alvarado - A01340173 y María Fernanda San Román Orozco - A01424691',
+                 style={'textAlign': 'center', 'color': '#5E7A91', 'marginBottom': '24px'}),
+
+    html.Div(
+        dcc.Dropdown(
+            id='dropdown-grafico',
+            options=GRAFICOS,
+            value='g1',
+            clearable=False,
+            style={'width': '420px'}
+        ),
+        style={'display': 'flex', 'justifyContent': 'center', 'marginBottom': '16px'}
+    ),
+
+    dcc.Graph(id='grafico'),
+
+    dcc.Markdown(id='descripcion',
+                 style={'maxWidth': '860px', 'margin': '16px auto',
+                        'color': '#2A475E', 'lineHeight': '1.7'}),
+
+], style={'fontFamily': 'sans-serif', 'padding': '32px'})
+
+
+@app.callback(
+    Output('grafico',     'figure'),
+    Output('descripcion', 'children'),
+    Input('dropdown-grafico', 'value')
+)
+def actualizar(value):
+    return make_figure(value), DESCRIPCIONES[value]
+
+
+if __name__ == '__main__':
+    app.run(debug=True)
